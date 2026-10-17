@@ -8,8 +8,8 @@ plugin) against the shipped artifact.
 
 GRC's DNS Benchmark v1 is no longer distributed — GRC withdrew it when v2 became a paid product
 ("v1 is wrong. v2 is correct. So we decided to stop offering any freeware that was wrong"), and
-`grc.com/dns/dns_bench.exe` now returns 404. The authentic v1 binary was recovered from the
-Internet Archive:
+`grc.com/dns/dns_bench.exe` now returns 404. A v1 binary was recovered from the Internet
+Archive:
 
 ```
 web.archive.org/web/20190117150340if_/https://www.grc.com/files/dnsbench.exe
@@ -20,21 +20,47 @@ PE32 executable for MS Windows 4.00 (GUI), Intel i386, 3 sections
 
 It is not redistributed in this repository.
 
+### A second, independently-sourced copy
+
+A user-supplied original (the copy GRC itself shipped, rather than the archive's) turned out to
+be the *same product version* built differently, which is worth recording because it changes
+what can be claimed about provenance:
+
+| | User's original | Archived capture |
+| --- | --- | --- |
+| SHA-256 | `a9bc505f668a6af598681a0eb1be64b484d869a48b5991107827a9f0052cff45` | `c03d23b734567a3deba88fc58cf721f5233e9c958f03268d72984a2bf9ac48a5` |
+| Size | 150,640 bytes | 169,624 bytes |
+| Sections | 2 | 3 (names zeroed) |
+| Packing | **PECompact2** (marker at `0xb176`) | not PECompact; section names zeroed |
+| Signing | DigiCert **EV** Code Signing CA (SHA2) → *Gibson Research Corporation* | DigiCert SHA2 **Assured ID** chain (non-EV) |
+| Version resource | `1.3.6668.0`, © 2018 Gibson Research Corp. | `1.3.6668.0`, © 2018 Gibson Research Corp. |
+| Product strings | `"DNS Benchmark", freeware by Steve Gibson`; `Measure the performance of DNS resolvers.` | identical |
+
+So the archived copy is not simply the same file mirrored — it is a differently packed, non-EV
+re-signed build of the same revision. The user's copy carries an **EV** code-signing certificate
+naming Gibson Research Corporation, which is the stronger provenance claim of the two; the
+version resources being identical is what makes them comparable at all.
+
+Everything above comes from reading the two files (`file`, section tables, the certificate
+table, version resources). Both remain packed, so neither yields code.
+
 ## What REA established (observed)
 
 | Operation | Result |
 | --- | --- |
 | `inspect-artifact` | Format `pe`, root SHA-256 as above, artifact inventory with one node, `evidence_id ev_5a55cc1f…` |
 | `inspect-managed-artifact` | `machine 0x014c` (x86), `optional_header pe32`, `section_count 3`, `cli null`, `classification.status = "not-managed"` — a native binary, not a .NET assembly |
-| `inspect-pe-resources` | **Refused.** `invalid_format: "PE section raw bytes overlap headers"` under its fail-closed integrity policy |
+| `inspect-pe-resources` | **Refused on both copies**, for *different* layout reasons (below) under its fail-closed integrity policy |
 | `providers` | No native analysis engine configured (no Ghidra, Hopper or IDA) |
 
 Two things worth recording:
 
-1. **REA refused to read the PE resource tree**, and that refusal is itself a finding: GRC's
-   hand-written assembly binary has a section layout that fails a strict header/overlap check.
-   The tool's integrity policy is `fail`, so it declined rather than guessing — the correct
-   behaviour, and a reminder that a rejected artifact is not the same as a broken tool.
+1. **REA refused to read the PE resource tree on both binaries**, and each refusal is itself a
+   finding about the target: the archived copy failed with `PE section raw bytes overlap
+   headers`, the user's copy with `Resource range is not entirely file-backed in one section` —
+   different symptoms of the same cause, a packed image whose sections do not satisfy a strict
+   layout check. The tool's integrity policy is `fail`, so it declined rather than guessing,
+   which is the correct behaviour and a reminder that a rejected artifact is not a broken tool.
 2. **No pseudocode was produced.** Native decompilation needs Ghidra plus a JDK, REA never
    installs providers, and its own skill instructs the agent not to install them either. So
    nothing here is claimed from decompiled code. Static string extraction (performed with

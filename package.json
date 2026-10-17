@@ -1,0 +1,92 @@
+{
+  "name": "resolverbench",
+  "productName": "ResolverBench",
+  "version": "1.0.0",
+  "description": "DNS resolver benchmark for macOS: measures cached, uncached and dot-com lookup performance and reliability of plain DNS, DNS-over-HTTPS and DNS-over-TLS resolvers.",
+  "main": "src/main/main.js",
+  "license": "MIT",
+  "author": {
+    "name": "Jake Piotrowski",
+    "email": "me@jakepi.me",
+    "url": "https://github.com/jakepi84"
+  },
+  "homepage": "https://github.com/jakepi-bot/resolverbench",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jakepi-bot/resolverbench.git"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/",
+    "integ": "node --test test/integration.network.test.js",
+    "selftest": "node src/engine/cli.js --quick --json results.json",
+    "icon": "node scripts/make-icon.js",
+    "dist:mac": "electron-builder --mac --arm64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.jakepi.resolverbench",
+    "productName": "ResolverBench",
+    "copyright": "Copyright © 2026 Jake Piotrowski",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "package.json",
+      "LICENSE",
+      "README.md"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "darkModeSupport": true,
+      "minimumSystemVersion": "11.0",
+      "extendInfo": {
+        "NSHumanReadableCopyright": "Copyright © 2026 Jake Piotrowski. MIT licensed.",
+        "LSApplicationCategoryType": "public.app-category.utilities"
+      }
+    },
+    "dmg": {
+      "title": "ResolverBench ${version}",
+      "contents": [
+        {
+          "x": 140,
+          "y": 200,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 200,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "artifactName": "${productName}-${version}-${arch}.${ext}"
+  }
+}

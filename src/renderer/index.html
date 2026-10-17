@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'"
+    />
+    <title>ResolverBench</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="titlebar">
+      <div class="titlebar-left">
+        <span class="app-name">ResolverBench</span>
+        <span class="app-sub" id="app-sub">DNS resolver performance &amp; reliability</span>
+      </div>
+      <div class="titlebar-actions">
+        <label class="field">
+          <span>Run</span>
+          <select id="mode" title="How many lookups per resolver">
+            <option value="quick">Quick · 20 lookups</option>
+            <option value="standard" selected>Standard · 50 lookups</option>
+            <option value="thorough">Thorough · 100 lookups</option>
+          </select>
+        </label>
+        <button id="run" class="primary" title="Start benchmarking the selected resolvers (⌘R)">Run Benchmark</button>
+        <button id="stop" class="danger" disabled title="Stop and keep the results so far (⌘.)">Stop</button>
+      </div>
+    </header>
+
+    <main>
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <h1>Resolvers <span id="selected-count" class="pill">0 selected</span></h1>
+          <div class="sidebar-buttons">
+            <button id="select-all" class="ghost" title="Select every resolver in the catalog">All</button>
+            <button id="select-none" class="ghost" title="Deselect everything">None</button>
+            <button id="select-fast" class="ghost" title="Select the fastest half of the resolvers measured so far">Fastest</button>
+          </div>
+          <div class="sidebar-buttons">
+            <button id="add" class="ghost" title="Add a resolver by address or URL">Add…</button>
+            <button id="import" class="ghost" title="Paste a list of resolvers or import one">Import…</button>
+            <button id="prune" class="ghost" title="Deselect resolvers that did not answer, or that lost queries">Prune</button>
+          </div>
+        </div>
+        <div class="resolver-list" id="resolver-list"></div>
+        <div class="sidebar-foot">
+          <label class="check">
+            <input type="checkbox" id="opt-rebinding" checked />
+            <span title="Ask each resolver for names that resolve to private IP addresses; a resolver that hands them back has no rebinding protection">Rebinding probe</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="opt-hijack" checked />
+            <span title="Ask each resolver for a name that cannot exist; an address back means it rewrites bad names">Hijack probe</span>
+          </label>
+          <label class="check">
+            <input type="checkbox" id="opt-dnssec" />
+            <span title="Ask signed zones with the DO bit set and look for the authenticated-data bit">DNSSEC probe</span>
+          </label>
+          <label class="field small">
+            <span>Timeout</span>
+            <input type="number" id="opt-timeout" value="1200" min="200" max="10000" step="100" /> ms
+          </label>
+        </div>
+      </aside>
+
+      <section class="content">
+        <nav class="tabs" role="tablist">
+          <button class="tab active" data-tab="chart" role="tab">Response Time</button>
+          <button class="tab" data-tab="table" role="tab">Tabular Data</button>
+          <button class="tab" data-tab="conclusions" role="tab">Conclusions</button>
+          <button class="tab" data-tab="log" role="tab">Log</button>
+          <div class="tabs-spacer"></div>
+          <label class="field small">
+            <span>Sort</span>
+            <select id="sort">
+              <option value="cached">Cached</option>
+              <option value="uncached">Uncached</option>
+              <option value="dotcom">.com referral</option>
+              <option value="label">Name</option>
+            </select>
+          </label>
+          <label class="field small">
+            <span>Scale</span>
+            <select id="scale">
+              <option value="auto">Auto</option>
+              <option value="fixed">Fixed</option>
+            </select>
+          </label>
+          <input type="number" id="scale-max" class="scale-max" value="300" min="10" step="10" title="Full-scale value in milliseconds" />
+          <button id="copy-results" class="ghost" title="Copy the measured values as text">Copy</button>
+          <button id="export-csv" class="ghost" title="Save a CSV of every column measured (⌘S)">CSV…</button>
+          <button id="export-report" class="ghost" title="Save the numbers and the conclusions as a text report">Report…</button>
+        </nav>
+
+        <div class="panes">
+          <div class="pane active" id="pane-chart">
+            <div class="chart-wrap">
+              <canvas id="chart"></canvas>
+              <div id="inspector" class="inspector" hidden></div>
+            </div>
+            <div class="legend">
+              <span class="legend-item"><i class="swatch cached"></i>Cached lookup <em>the resolver already knew the answer</em></span>
+              <span class="legend-item"><i class="swatch uncached"></i>Uncached lookup <em>the resolver had to ask authoritative servers</em></span>
+              <span class="legend-item"><i class="swatch dotcom"></i>.com referral <em>path to the .com TLD servers</em></span>
+            </div>
+          </div>
+
+          <div class="pane" id="pane-table">
+            <div class="table-scroll">
+              <table id="results-table">
+                <thead></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="pane" id="pane-conclusions">
+            <div id="conclusions" class="conclusions">
+              <p class="empty">Run a benchmark to see what the numbers mean.</p>
+            </div>
+          </div>
+
+          <div class="pane" id="pane-log">
+            <div class="log" id="log"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="statusbar">
+      <div class="progress"><div class="progress-bar" id="progress-bar"></div></div>
+      <span id="status">Ready.</span>
+      <span class="statusbar-right" id="status-right"></span>
+    </footer>
+
+    <dialog id="add-dialog">
+      <form method="dialog">
+        <h2>Add resolvers</h2>
+        <p class="hint">
+          One per line. Plain <code>1.1.1.1</code>, <code>1.1.1.1:5353</code>, <code>tls://dns.example</code>,
+          <code>tcp://dns.example</code> or <code>https://dns.example/dns-query</code>.
+        </p>
+        <textarea id="add-text" rows="7" spellcheck="false" placeholder="1.1.1.1&#10;tls://dns.quad9.net&#10;https://dns.google/dns-query"></textarea>
+        <p class="error" id="add-error" hidden></p>
+        <menu>
+          <button value="cancel" class="ghost">Cancel</button>
+          <button value="ok" class="primary" id="add-confirm">Add</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <script src="chart.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

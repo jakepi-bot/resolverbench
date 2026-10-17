@@ -1,0 +1,151 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: engine tests (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: unit tests
+        run: node --test test/wire.test.js test/stats.test.js test/corpus.test.js
+
+      - name: live-network integration tests
+        run: node --test test/integration.network.test.js
+
+      - name: headless benchmark against the real internet
+        run: |
+          node src/engine/cli.js --quick \
+            --servers cloudflare,google,quad9,opendns,cloudflare-dot,google-dot,quad9-dot,cloudflare-doh,google-doh,quad9-doh \
+            --csv results.csv --json results.json --top 12
+
+      - name: the benchmark must have measured something
+        run: node scripts/check-results.js results.json --min-answered=4 --min-samples=3
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-results
+          path: |
+            results.json
+            results.csv
+
+  build-macos:
+    name: macOS arm64 app + release
+    needs: test
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: engine selftest on Apple silicon
+        run: |
+          node src/engine/cli.js --quick \
+            --servers cloudflare,google,quad9,cloudflare-dot,google-dot,cloudflare-doh,google-doh \
+            --json macos-engine-results.json --quiet
+          node scripts/check-results.js macos-engine-results.json --min-answered=3 --min-samples=3
+
+      - name: icon is present and is the size electron-builder needs
+        run: |
+          node scripts/make-icon.js build/icon.png
+          node -e "const b=require('fs').readFileSync('build/icon.png');const w=b.readUInt32BE(16),h=b.readUInt32BE(20);if(w<512||h<512)throw new Error('icon too small: '+w+'x'+h);console.log('icon',w+'x'+h)"
+
+      - name: build the arm64 app and the DMG/ZIP
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --mac --arm64 --publish never
+
+      - name: the app bundle must be arm64 and verify as signed code
+        run: |
+          set -euo pipefail
+          APP="dist/mac-arm64/ResolverBench.app"
+          test -d "$APP" || { echo "no app bundle at $APP"; ls -R dist | head -50; exit 1; }
+          echo "bundle: $APP"
+          lipo -archs "$APP/Contents/MacOS/ResolverBench"
+          ARCHS=$(lipo -archs "$APP/Contents/MacOS/ResolverBench")
+          [ "$ARCHS" = "arm64" ] || { echo "expected arm64, got $ARCHS"; exit 1; }
+          codesign --verify --strict --verbose=2 "$APP"
+          codesign -dv "$APP" 2>&1 | tee /tmp/codesign.txt
+          grep -qi 'Signature=adhoc' /tmp/codesign.txt || { echo "app is not ad-hoc signed"; exit 1; }
+          plutil -p "$APP/Contents/Info.plist" | grep -E 'CFBundleIdentifier|CFBundleShortVersionString|LSMinimumSystemVersion|CFBundleExecutable'
+
+      - name: the packaged app must run the benchmark headlessly
+        run: |
+          set -euo pipefail
+          APP="dist/mac-arm64/ResolverBench.app"
+          "$APP/Contents/MacOS/ResolverBench" --headless --quick \
+            --servers cloudflare,quad9,cloudflare-dot,cloudflare-doh \
+            --json packaged-results.json --csv packaged-results.csv --top 4
+          node scripts/check-results.js packaged-results.json --min-answered=2 --min-samples=3
+
+      - name: the DMG must contain the same signed arm64 app
+        run: |
+          set -euo pipefail
+          DMG=$(ls dist/*.dmg | head -1)
+          echo "dmg: $DMG"
+          MOUNT=$(mktemp -d)
+          hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT"
+          ls -la "$MOUNT"
+          test -d "$MOUNT/ResolverBench.app"
+          lipo -archs "$MOUNT/ResolverBench.app/Contents/MacOS/ResolverBench"
+          codesign --verify --strict --verbose=2 "$MOUNT/ResolverBench.app"
+          "$MOUNT/ResolverBench.app/Contents/MacOS/ResolverBench" --headless --quick \
+            --servers cloudflare,quad9 --json dmg-results.json --quiet
+          node scripts/check-results.js dmg-results.json --min-answered=1 --min-samples=3
+          hdiutil detach "$MOUNT"
+
+      - name: checksums
+        run: |
+          cd dist
+          shasum -a 256 ./*.dmg ./*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: resolverbench-macos-arm64
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/SHA256SUMS.txt
+            macos-engine-results.json
+            packaged-results.json
+            packaged-results.csv
+
+      - name: publish the release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ls -lh dist
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/*.dmg dist/*.zip dist/SHA256SUMS.txt \
+            --title "ResolverBench ${GITHUB_REF_NAME#v}" \
+            --notes-file docs/RELEASE_NOTES.md
+          gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[] | "\(.name) \(.size) bytes"'
